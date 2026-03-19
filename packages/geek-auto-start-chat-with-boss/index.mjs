@@ -314,6 +314,9 @@ const blockBossNotNewChat = new Set()
 const blockBossNotActive = new Set()
 const blockJobNotSuit = new Set()
 
+let sessionChatCount = 0
+let lastKnownRemainCount = null
+
 async function markJobAsNotSuitInRecommendPage (reasonCode) {
   /**
    * @type {{chosenReasonInUi?: { code: number, text: string}}}
@@ -738,7 +741,42 @@ async function toRecommendPage (hooks) {
       case 'expect': {
         await page.waitForSelector(USER_SET_EXPECT_JOB_ENTRIES_SELECTOR)
         const allExpectJobEntryHandles = await page.$$(USER_SET_EXPECT_JOB_ENTRIES_SELECTOR)
-        allExpectJobEntryHandles.forEach((it, index) => {
+
+        // Build indexed list with city info extracted from tab text
+        const expectTabInfoList = []
+        for (let i = 0; i < allExpectJobEntryHandles.length; i++) {
+          const tabText = await allExpectJobEntryHandles[i].evaluate(el => el.textContent.trim())
+          // Extract city from tab text, e.g. "Java(杭州)" -> "杭州"
+          const cityMatch = tabText.match(/\(([^)]+)\)\s*$/)
+          const cityName = cityMatch ? cityMatch[1] : null
+          expectTabInfoList.push({ index: i, tabText, cityName })
+        }
+
+        // Filter and reorder based on expectCityList
+        let orderedExpectTabs
+        if (Array.isArray(expectCityList) && expectCityList.length) {
+          // Only keep tabs whose city matches expectCityList, ordered by expectCityList order
+          const matchedTabs = []
+          for (const city of expectCityList) {
+            const matched = expectTabInfoList.find(tab => tab.cityName === city)
+            if (matched) {
+              matchedTabs.push(matched)
+            }
+          }
+          if (matchedTabs.length) {
+            orderedExpectTabs = matchedTabs
+            console.log(`[expect tab filter] expectCityList: [${expectCityList.join(', ')}], matched tabs: [${matchedTabs.map(t => t.tabText).join(', ')}], skipped tabs: [${expectTabInfoList.filter(t => !matchedTabs.includes(t)).map(t => t.tabText).join(', ')}]`)
+          } else {
+            // No match found, fall back to original order
+            orderedExpectTabs = expectTabInfoList
+            console.log(`[expect tab filter] expectCityList: [${expectCityList.join(', ')}], no matching tabs found, using original order`)
+          }
+        } else {
+          orderedExpectTabs = expectTabInfoList
+        }
+
+        orderedExpectTabs.forEach((tabInfo) => {
+          const index = tabInfo.index
           computedSourceList.push({
             type: source.type,
             selector: `${USER_SET_EXPECT_JOB_ENTRIES_SELECTOR}:nth-child(${index + 1})`,
@@ -1536,6 +1574,7 @@ async function toRecommendPage (hooks) {
             return res
           }
           const waitAndHandleChatSuccess = async () => {
+            sessionChatCount++
             await hooks.newChatStartup?.promise(
               targetJobData,
               {
@@ -1543,6 +1582,14 @@ async function toRecommendPage (hooks) {
                 jobSource: JobSource[computedSourceList[currentSourceIndex]?.type]
               }
             )
+            let dailyStatsHistory = []
+            try { dailyStatsHistory = readStorageFile('chat-greet-daily-stats.json') ?? [] } catch {}
+            if (!Array.isArray(dailyStatsHistory)) { dailyStatsHistory = [] }
+            await hooks.chatGreetCountUpdated?.promise({
+              sessionChatCount,
+              remainCount: lastKnownRemainCount,
+              dailyStatsHistory
+            })
             blockBossNotNewChat.add(targetJobData.jobInfo.encryptUserId)
 
             await storeStorage(page).catch(() => void 0)
@@ -1560,6 +1607,10 @@ async function toRecommendPage (hooks) {
               res.zpData.bizData?.chatRemindDialog?.blockLevel === 0 &&
               /剩\d+次沟通机会/.test(res.zpData.bizData?.chatRemindDialog?.content)
             ) {
+              const remainMatch = res.zpData.bizData?.chatRemindDialog?.content?.match(/剩(\d+)次沟通机会/)
+              if (remainMatch) {
+                lastKnownRemainCount = parseInt(remainMatch[1], 10)
+              }
               await waitForSageTimeOrJustContinue({
                 tag: 'beforeJobChatStartupAfterTwiceConfirm',
                 hooks
@@ -1591,6 +1642,32 @@ async function toRecommendPage (hooks) {
               )
             ) {
               // startup chat error, may the chance of today has used out
+              lastKnownRemainCount = 0
+              // persist daily limit stats for quota estimation
+              try {
+                const todayStr = new Date().toISOString().slice(0, 10)
+                let dailyStats = []
+                try { dailyStats = readStorageFile('chat-greet-daily-stats.json') ?? [] } catch {}
+                if (!Array.isArray(dailyStats)) { dailyStats = [] }
+                dailyStats.push({
+                  date: todayStr,
+                  sessionChatCount,
+                  hitLimitAt: new Date().toISOString()
+                })
+                // keep last 30 records
+                if (dailyStats.length > 30) { dailyStats = dailyStats.slice(-30) }
+                await writeStorageFile('chat-greet-daily-stats.json', dailyStats)
+                console.log(`[chat greet stats] daily limit reached, sessionChatCount: ${sessionChatCount}, saved to chat-greet-daily-stats.json`)
+              } catch (e) { console.error('[chat greet stats] failed to save daily stats', e) }
+              let updatedDailyStats = []
+              try { updatedDailyStats = readStorageFile('chat-greet-daily-stats.json') ?? [] } catch {}
+              if (!Array.isArray(updatedDailyStats)) { updatedDailyStats = [] }
+              await hooks.chatGreetCountUpdated?.promise({
+                sessionChatCount,
+                remainCount: lastKnownRemainCount,
+                hitDailyLimit: true,
+                dailyStatsHistory: updatedDailyStats
+              })
               await storeStorage(page).catch(() => void 0)
               throw new Error('STARTUP_CHAT_ERROR_DUE_TO_TODAY_CHANCE_HAS_USED_OUT')
             }

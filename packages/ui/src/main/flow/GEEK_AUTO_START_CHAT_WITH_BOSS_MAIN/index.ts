@@ -115,9 +115,21 @@ const runAutoChat = async () => {
     errorEncounter: new SyncHook(['errorInfo']),
     encounterEmptyRecommendJobList: new AsyncSeriesHook(['args']),
     sageTimeEnter: new AsyncSeriesHook(['args']),
-    sageTimeExit: new AsyncSeriesHook(['args'])
+    sageTimeExit: new AsyncSeriesHook(['args']),
+    chatGreetCountUpdated: new AsyncSeriesHook(['countInfo'])
   }
   initPlugins(hooks)
+
+  hooks.chatGreetCountUpdated.tapPromise('SendChatGreetCountToUI', async (countInfo) => {
+    sendToDaemon({
+      type: 'worker-to-gui-message',
+      data: {
+        type: 'chat-greet-count-updated',
+        countInfo,
+        runRecordId
+      }
+    })
+  })
 
   gtag('run_auto_chat_with_boss_main_ready')
 
