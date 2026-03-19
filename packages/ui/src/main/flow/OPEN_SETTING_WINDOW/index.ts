@@ -6,6 +6,7 @@ import initIpc from './ipc'
 import gtag from '../../utils/gtag'
 import initPublicIpc from '../../utils/initPublicIpc'
 import { sendToDaemon, closeDaemonClient } from './connect-to-daemon'
+import { initConfigBackupIpc } from '../../features/config-backup'
 
 export function openSettingWindow() {
   // TODO: singleton lock; how can we check if there is another process should run as singleton with arguments?
@@ -36,6 +37,7 @@ export function openSettingWindow() {
     ipcMain.on('ping', () => console.log('pong'))
     initPublicIpc()
     initIpc()
+    initConfigBackupIpc()
 
     app.on('activate', function () {
       // On macOS it's common to re-create a window in the app when the
