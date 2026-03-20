@@ -155,6 +155,6 @@ jobs:
           prerelease: true
           allowUpdates: true
           artifacts: geekgeekrun-ui@${{ github.sha }}/*
-          tag: ${{ github.ref }}
+          tag: ${{ github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           body: TODO New Release.
