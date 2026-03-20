@@ -883,6 +883,43 @@ async function toRecommendPage (hooks) {
   // Track how many sources have been visited in the current round (for ROUND_ROBIN wrap-around)
   let sourcesVisitedThisRound = 0
 
+  // City visit statistics
+  const cityVisitCount = {}
+  function getSourceCityName(idx) {
+    return computedSourceList[idx]?.cityName ?? `源#${idx}`
+  }
+  function getTraverseModeName() {
+    switch (multiCityTraverseMode) {
+      case MultiCityTraverseMode.SEQUENTIAL: return '逐个城市刷完'
+      case MultiCityTraverseMode.ROUND_ROBIN: return '一轮一个城市轮换'
+      case MultiCityTraverseMode.WEIGHTED: return '按比重随机分配'
+      default: return '未知'
+    }
+  }
+  function recordCityVisit(idx) {
+    const name = getSourceCityName(idx)
+    cityVisitCount[name] = (cityVisitCount[name] || 0) + 1
+  }
+  function logCityStatus({ phase, sleepSec, currentIdx, nextIdx }) {
+    const currentCity = getSourceCityName(currentIdx)
+    const nextCity = nextIdx !== undefined ? getSourceCityName(nextIdx) : '—'
+    const strategy = getTraverseModeName()
+    const stats = Object.entries(cityVisitCount).map(([c, n]) => `${c}:${n}次`).join(', ') || '暂无'
+    console.log(
+      `\n========== [城市轮换状态] ==========\n` +
+      `  阶段: ${phase}\n` +
+      (sleepSec !== undefined ? `  休息时长: ${sleepSec.toFixed(1)} 秒\n` : '') +
+      `  当前城市: ${currentCity}\n` +
+      `  当前策略: ${strategy}\n` +
+      `  下一个城市: ${nextCity}\n` +
+      `  各城市访问统计: ${stats}\n` +
+      (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN
+        ? `  轮换计数器: ${roundRobinCounter} (本轮已访问 ${sourcesVisitedThisRound}/${computedSourceList.length})\n`
+        : '') +
+      `====================================`
+    )
+  }
+
   // Determine initial source index based on traverse mode
   let currentSourceIndex = 0
   if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
@@ -892,6 +929,7 @@ async function toRecommendPage (hooks) {
     currentSourceIndex = pickWeightedSourceIndex(computedSourceList, multiCityTraverseWeights, expectCityList)
     console.log(`[multi-city] WEIGHTED mode, picked source index ${currentSourceIndex}`)
   }
+  logCityStatus({ phase: '初始化', currentIdx: currentSourceIndex, nextIdx: undefined })
   afterPageLoad: while (true) {
     // check set security question tip modal
     let setSecurityQuestionTipModelProxy
@@ -1783,6 +1821,7 @@ async function toRecommendPage (hooks) {
     }
     // Source traversal: track visits and determine next source
     sourcesVisitedThisRound++
+    recordCityVisit(currentSourceIndex)
 
     // Check if this round is complete
     const isRoundComplete = (() => {
@@ -1797,7 +1836,21 @@ async function toRecommendPage (hooks) {
     if (isRoundComplete) {
       hooks.noPositionFoundForCurrentJob?.call()
       hooks.noPositionFoundAfterTraverseAllJob?.call()
-      await sleep((20 + 30 * Math.random()) * 1000)
+      const sleepMs = (20 + 30 * Math.random()) * 1000
+      const sleepSec = sleepMs / 1000
+
+      // Determine next source index
+      let nextSourceIndex
+      if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
+        nextSourceIndex = (roundRobinCounter + 1) % computedSourceList.length
+      } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
+        nextSourceIndex = undefined // will be picked after sleep
+      } else {
+        nextSourceIndex = 0
+      }
+      logCityStatus({ phase: '本轮结束，准备休息', sleepSec, currentIdx: currentSourceIndex, nextIdx: nextSourceIndex })
+
+      await sleep(sleepMs)
       await Promise.all([
         page.goto(`https://www.zhipin.com/web/geek/jobs`),
         page.waitForNavigation()
@@ -1810,23 +1863,33 @@ async function toRecommendPage (hooks) {
         try {
           writeStorageFile('multi-city-round-robin-counter.json', { counter: roundRobinCounter })
         } catch {}
-        console.log(`[multi-city] ROUND_ROBIN: next round starting from source index ${currentSourceIndex} (counter=${roundRobinCounter})`)
       } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
         currentSourceIndex = pickWeightedSourceIndex(computedSourceList, multiCityTraverseWeights, expectCityList)
-        console.log(`[multi-city] WEIGHTED: next round picked source index ${currentSourceIndex}`)
       } else {
         currentSourceIndex = 0
       }
+      logCityStatus({ phase: '新一轮开始', currentIdx: currentSourceIndex, nextIdx: undefined })
     } else {
       hooks.noPositionFoundForCurrentJob?.call()
-      await sleep((10 + 15 * Math.random()) * 1000)
+      const sleepMs = (10 + 15 * Math.random()) * 1000
+      const sleepSec = sleepMs / 1000
+
+      let nextSourceIndex
       if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
-        // ROUND_ROBIN: wrap around to continue visiting remaining sources
+        nextSourceIndex = (currentSourceIndex + 1) % computedSourceList.length
+      } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
+        nextSourceIndex = undefined
+      } else {
+        nextSourceIndex = currentSourceIndex + 1
+      }
+      logCityStatus({ phase: '切换城市', sleepSec, currentIdx: currentSourceIndex, nextIdx: nextSourceIndex })
+
+      await sleep(sleepMs)
+      if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
         currentSourceIndex = (currentSourceIndex + 1) % computedSourceList.length
       } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
-        // WEIGHTED: pick next source by weight
         currentSourceIndex = pickWeightedSourceIndex(computedSourceList, multiCityTraverseWeights, expectCityList)
-        console.log(`[multi-city] WEIGHTED: picked next source index ${currentSourceIndex}`)
+        logCityStatus({ phase: '按比重选中新城市', currentIdx: currentSourceIndex, nextIdx: undefined })
       } else {
         currentSourceIndex += 1
       }
