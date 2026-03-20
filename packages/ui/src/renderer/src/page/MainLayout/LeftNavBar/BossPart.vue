@@ -1,6 +1,18 @@
 <template>
   <div class="group-item">
     <div class="group-title">逛BOSS</div>
+    <!-- Today's chat greet stats card -->
+    <div class="today-stats-card">
+      <div class="stats-main">
+        <span class="stats-icon">💬</span>
+        <span class="stats-label">今日已开聊</span>
+        <span class="stats-count">{{ todayChatCount }}</span>
+        <span class="stats-unit">次</span>
+      </div>
+      <div v-if="estimatedDailyLimit !== null" class="stats-sub">
+        推测上限 <b>{{ estimatedDailyLimit }}</b> 次
+      </div>
+    </div>
     <div flex flex-col class="link-list">
       <RouterLink to="./GeekAutoStartChatWithBoss">
         自动开聊
@@ -95,10 +107,58 @@
 </template>
 
 <script lang="ts" setup>
+import { ref, computed, onBeforeUnmount } from 'vue'
 import { gtagRenderer } from '@renderer/utils/gtag'
 import { debounce } from 'lodash'
 import { ElMessage } from 'element-plus'
 import { TopRight, QuestionFilled } from '@element-plus/icons-vue'
+
+const { ipcRenderer } = electron
+
+// Today's chat count stats
+const todayChatCount = ref(0)
+const dailyStatsHistory = ref<Array<{ date: string; sessionChatCount: number; hitLimitAt: string }>>([])
+const estimatedDailyLimit = computed(() => {
+  if (!dailyStatsHistory.value.length) return null
+  const counts = dailyStatsHistory.value.map(it => it.sessionChatCount)
+  return Math.round(counts.reduce((a, b) => a + b, 0) / counts.length)
+})
+
+// Load stats from persistent storage on mount
+async function loadStats() {
+  try {
+    const data = await ipcRenderer.invoke('read-storage-file', { fileName: 'chat-greet-today-count.json' })
+    const todayStr = new Date().toISOString().slice(0, 10)
+    if (data?.date === todayStr) {
+      todayChatCount.value = data.count ?? 0
+    } else {
+      todayChatCount.value = 0
+    }
+  } catch {
+    todayChatCount.value = 0
+  }
+  try {
+    const stats = await ipcRenderer.invoke('read-storage-file', { fileName: 'chat-greet-daily-stats.json' })
+    if (Array.isArray(stats)) {
+      dailyStatsHistory.value = stats
+    }
+  } catch {}
+}
+loadStats()
+
+// Listen for real-time updates from running worker
+function handleWorkerMessage(_ev, { data }) {
+  if (data.type === 'chat-greet-count-updated') {
+    todayChatCount.value = data.countInfo.todayChatCount ?? todayChatCount.value
+    if (Array.isArray(data.countInfo.dailyStatsHistory)) {
+      dailyStatsHistory.value = data.countInfo.dailyStatsHistory
+    }
+  }
+}
+ipcRenderer.on('worker-to-gui-message', handleWorkerMessage)
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('worker-to-gui-message', handleWorkerMessage)
+})
 
 const handleClickLaunchBossLogin = async () => {
   gtagRenderer('launch_login_clicked')
@@ -125,4 +185,46 @@ const handleLaunchBossSite = debounce(
 )
 </script>
 
-<style scoped lang="scss" src="./style.scss"></style>
+<style scoped lang="scss">
+@import './style.scss';
+
+.today-stats-card {
+  margin: 6px 0 8px 0;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(0, 164, 128, 0.12), rgba(47, 170, 158, 0.18));
+  border-radius: 10px;
+  border: 1px solid rgba(0, 164, 128, 0.15);
+  .stats-main {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    .stats-icon {
+      font-size: 16px;
+      margin-right: 4px;
+    }
+    .stats-label {
+      font-size: 13px;
+      color: #3a3a3a;
+    }
+    .stats-count {
+      font-size: 22px;
+      font-weight: 700;
+      color: #00a480;
+      margin-left: 4px;
+    }
+    .stats-unit {
+      font-size: 12px;
+      color: #666;
+      margin-left: 2px;
+    }
+  }
+  .stats-sub {
+    margin-top: 2px;
+    font-size: 11px;
+    color: #888;
+    b {
+      color: #00a480;
+    }
+  }
+}
+</style>

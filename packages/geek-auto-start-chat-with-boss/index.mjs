@@ -1575,6 +1575,15 @@ async function toRecommendPage (hooks) {
           }
           const waitAndHandleChatSuccess = async () => {
             sessionChatCount++
+            // Update today's persistent chat count
+            let todayCountData = {}
+            const todayStr = new Date().toISOString().slice(0, 10)
+            try { todayCountData = readStorageFile('chat-greet-today-count.json') ?? {} } catch {}
+            if (todayCountData.date !== todayStr) {
+              todayCountData = { date: todayStr, count: 0 }
+            }
+            todayCountData.count++
+            try { await writeStorageFile('chat-greet-today-count.json', todayCountData) } catch (e) { console.error('[chat greet stats] failed to save today count', e) }
             await hooks.newChatStartup?.promise(
               targetJobData,
               {
@@ -1587,6 +1596,7 @@ async function toRecommendPage (hooks) {
             if (!Array.isArray(dailyStatsHistory)) { dailyStatsHistory = [] }
             await hooks.chatGreetCountUpdated?.promise({
               sessionChatCount,
+              todayChatCount: todayCountData.count,
               remainCount: lastKnownRemainCount,
               dailyStatsHistory
             })
@@ -1662,8 +1672,11 @@ async function toRecommendPage (hooks) {
               let updatedDailyStats = []
               try { updatedDailyStats = readStorageFile('chat-greet-daily-stats.json') ?? [] } catch {}
               if (!Array.isArray(updatedDailyStats)) { updatedDailyStats = [] }
+              let todayCount = 0
+              try { const tc = readStorageFile('chat-greet-today-count.json'); if (tc?.date === new Date().toISOString().slice(0, 10)) todayCount = tc.count } catch {}
               await hooks.chatGreetCountUpdated?.promise({
                 sessionChatCount,
+                todayChatCount: todayCount,
                 remainCount: lastKnownRemainCount,
                 hitDailyLimit: true,
                 dailyStatsHistory: updatedDailyStats

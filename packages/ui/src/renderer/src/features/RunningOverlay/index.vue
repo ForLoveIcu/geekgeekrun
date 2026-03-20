@@ -41,6 +41,17 @@
             </li>
           </ul>
         </div>
+        <div v-if="todayChatCount > 0 || hitDailyLimit" class="chat-greet-stats">
+          <div v-if="todayChatCount > 0">
+            <span>📊 今日已开聊 <b>{{ todayChatCount }}</b> 次</span>
+            <span v-if="remainCount !== null"> · 今日剩余 <b>{{ remainCount }}</b> 次</span>
+          </div>
+          <div v-if="hitDailyLimit" class="hit-limit-tip">⚠️ 今日沟通人数已达上限</div>
+          <div v-if="estimatedDailyLimit !== null" class="estimated-limit">
+            <span>📈 推测每日上限约 <b>{{ estimatedDailyLimit }}</b> 次</span>
+            <span class="hint">(基于 {{ dailyStatsHistory.length }} 次历史达上限记录)</span>
+          </div>
+        </div>
         <div flex justify-between items-center w-full>
           <div>
             {{ runningStatusTextMapByCode[currentRunningStatus] }}
@@ -57,7 +68,7 @@
 <script lang="ts" setup>
 // import { useTaskManagerStore } from '@renderer/store'
 import { getAutoStartChatSteps } from '../../../../common/prerequisite-step-by-step-check'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, onBeforeUnmount, ref, watch } from 'vue'
 import {
   AUTO_CHAT_ERROR_EXIT_CODE,
   RUNNING_STATUS_ENUM
@@ -136,6 +147,59 @@ function messageHandler(ev, { data }) {
 }
 const unListenMessage = ipcRenderer.on('worker-to-gui-message', messageHandler)
 onUnmounted(unListenMessage)
+
+// Chat greet count stats
+const todayChatCount = ref(0)
+const remainCount = ref<number | null>(null)
+const hitDailyLimit = ref(false)
+const dailyStatsHistory = ref<Array<{ date: string; sessionChatCount: number; hitLimitAt: string }>>([])
+const estimatedDailyLimit = computed(() => {
+  if (!dailyStatsHistory.value.length) return null
+  const counts = dailyStatsHistory.value.map(it => it.sessionChatCount)
+  return Math.round(counts.reduce((a, b) => a + b, 0) / counts.length)
+})
+// Load initial today count from persisted file
+async function loadTodayCount() {
+  try {
+    const data = await ipcRenderer.invoke('read-storage-file', { fileName: 'chat-greet-today-count.json' })
+    const todayStr = new Date().toISOString().slice(0, 10)
+    if (data?.date === todayStr) {
+      todayChatCount.value = data.count ?? 0
+    } else {
+      todayChatCount.value = 0
+    }
+  } catch {
+    todayChatCount.value = 0
+  }
+  try {
+    const stats = await ipcRenderer.invoke('read-storage-file', { fileName: 'chat-greet-daily-stats.json' })
+    if (Array.isArray(stats)) {
+      dailyStatsHistory.value = stats
+    }
+  } catch {}
+}
+loadTodayCount()
+function handleChatGreetMessage(_ev, { data }) {
+  if (data.type === 'chat-greet-count-updated') {
+    todayChatCount.value = data.countInfo.todayChatCount ?? todayChatCount.value
+    remainCount.value = data.countInfo.remainCount ?? remainCount.value
+    if (data.countInfo.hitDailyLimit) {
+      hitDailyLimit.value = true
+    }
+    if (Array.isArray(data.countInfo.dailyStatsHistory)) {
+      dailyStatsHistory.value = data.countInfo.dailyStatsHistory
+    }
+  }
+}
+ipcRenderer.on('worker-to-gui-message', handleChatGreetMessage)
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('worker-to-gui-message', handleChatGreetMessage)
+})
+// Reload today count when dialog re-opens (new run)
+watch(() => props.runRecordId, () => {
+  loadTodayCount()
+  hitDailyLimit.value = false
+})
 
 const isDialogVisible = ref(false)
 const show = () => {
@@ -227,6 +291,30 @@ ipcRenderer.on('worker-exited', (ev, payload) => {
       padding: var(--el-dialog-padding-primary);
       //border-radius: 0 0 20px 20px;
       border-radius: 20px;
+      .chat-greet-stats {
+        margin-top: 12px;
+        margin-bottom: 8px;
+        padding: 10px 14px;
+        background: rgba(0, 164, 128, 0.08);
+        border-radius: 8px;
+        font-size: 13px;
+        color: #333;
+        b {
+          color: #00a480;
+        }
+        .hit-limit-tip {
+          margin-top: 4px;
+          color: #e6a23c;
+          font-weight: 500;
+        }
+        .estimated-limit {
+          margin-top: 4px;
+          .hint {
+            font-size: 12px;
+            color: #999;
+          }
+        }
+      }
     }
   }
 }

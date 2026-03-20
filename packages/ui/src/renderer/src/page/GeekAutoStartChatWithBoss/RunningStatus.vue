@@ -8,9 +8,9 @@
         <p>📱 你可以在<b>手机</b> / <b>平板电脑</b>上，使用BOSS直聘App与为你开聊的BOSS聊天</p>
         <p>🍀 祝你求职顺利！</p>
       </article>
-      <div v-if="sessionChatCount > 0 || hitDailyLimit" class="chat-greet-stats">
-        <div v-if="sessionChatCount > 0">
-          <span>📊 本次已开聊 <b>{{ sessionChatCount }}</b> 次</span>
+      <div v-if="todayChatCount > 0 || hitDailyLimit" class="chat-greet-stats">
+        <div v-if="todayChatCount > 0">
+          <span>📊 今日已开聊 <b>{{ todayChatCount }}</b> 次</span>
           <span v-if="remainCount !== null"> · 今日剩余 <b>{{ remainCount }}</b> 次</span>
         </div>
         <div v-if="hitDailyLimit" class="hit-limit-tip">⚠️ 今日沟通人数已达上限</div>
@@ -57,7 +57,7 @@ onUnmounted(() => {
   ipcRenderer.removeListener('geek-auto-start-chat-with-boss-stopping', handleStopping)
 })
 
-const sessionChatCount = ref(0)
+const todayChatCount = ref(0)
 const remainCount = ref<number | null>(null)
 const hitDailyLimit = ref(false)
 const dailyStatsHistory = ref<Array<{ date: string; sessionChatCount: number; hitLimitAt: string }>>([])
@@ -68,7 +68,7 @@ const estimatedDailyLimit = computed(() => {
 })
 function handleWorkerMessage(_ev, { data }) {
   if (data.type === 'chat-greet-count-updated') {
-    sessionChatCount.value = data.countInfo.sessionChatCount ?? sessionChatCount.value
+    todayChatCount.value = data.countInfo.todayChatCount ?? todayChatCount.value
     remainCount.value = data.countInfo.remainCount ?? remainCount.value
     if (data.countInfo.hitDailyLimit) {
       hitDailyLimit.value = true
