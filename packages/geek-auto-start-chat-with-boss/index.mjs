@@ -28,7 +28,8 @@ import {
   SalaryCalculateWay,
   JobDetailRegExpMatchLogic,
   JobSource,
-  CombineRecommendJobFilterType
+  CombineRecommendJobFilterType,
+  MultiCityTraverseMode
 } from '@geekgeekrun/sqlite-plugin/dist/enums'
 import {
   activeDescList,
@@ -140,6 +141,8 @@ const expectCityList = (
     :
     commonJobConditionConfig.expectCityList
 ) ?? []
+const multiCityTraverseMode = readConfigFile('boss.json').multiCityTraverseMode ?? MultiCityTraverseMode.SEQUENTIAL
+const multiCityTraverseWeights = readConfigFile('boss.json').multiCityTraverseWeights ?? {}
 
 const strategyScopeOptionWhenMarkJobCityNotMatch = readConfigFile('boss.json').strategyScopeOptionWhenMarkJobCityNotMatch ?? StrategyScopeOptionWhenMarkJobNotMatch.ONLY_COMPANY_MATCHED_JOB
 
@@ -674,6 +677,38 @@ async function setFilterCondition (selectedFilters) {
   }
 }
 
+/**
+ * Pick a source index based on weighted random selection.
+ * Weights are configured per city name in multiCityTraverseWeights.
+ * Sources without a matching city default to weight 1.
+ */
+function pickWeightedSourceIndex(computedSourceList, weights, cityList) {
+  // Build weight array - map each source to a weight value
+  const weightArr = computedSourceList.map((source) => {
+    // Use cityName stored on the source item (set for 'expect' type)
+    const cityName = source.cityName ?? null
+    if (cityName && weights[cityName] !== undefined) {
+      return Math.max(0, Number(weights[cityName]) || 0)
+    }
+    return 1 // default weight
+  })
+
+  const totalWeight = weightArr.reduce((sum, w) => sum + w, 0)
+  if (totalWeight <= 0) {
+    // Fallback: random uniform
+    return Math.floor(Math.random() * computedSourceList.length)
+  }
+
+  let random = Math.random() * totalWeight
+  for (let i = 0; i < weightArr.length; i++) {
+    random -= weightArr[i]
+    if (random <= 0) {
+      return i
+    }
+  }
+  return computedSourceList.length - 1
+}
+
 async function toRecommendPage (hooks) {
   let userInfoPromise = page.waitForResponse((response) => {
       if (response.url().startsWith('https://www.zhipin.com/wapi/zpuser/wap/getUserInfo.json')) {
@@ -779,6 +814,7 @@ async function toRecommendPage (hooks) {
           const index = tabInfo.index
           computedSourceList.push({
             type: source.type,
+            cityName: tabInfo.cityName,
             selector: `${USER_SET_EXPECT_JOB_ENTRIES_SELECTOR}:nth-child(${index + 1})`,
             async getIsCurrentActiveSource () {
               return await page.evaluate(
@@ -835,7 +871,27 @@ async function toRecommendPage (hooks) {
     }
   }
 
+  // Read persist round-robin counter from storage for cross-session city rotation
+  let roundRobinCounter = 0
+  try {
+    const stored = readStorageFile('multi-city-round-robin-counter.json')
+    if (typeof stored?.counter === 'number') {
+      roundRobinCounter = stored.counter
+    }
+  } catch {}
+
+  // Track how many sources have been visited in the current round (for ROUND_ROBIN wrap-around)
+  let sourcesVisitedThisRound = 0
+
+  // Determine initial source index based on traverse mode
   let currentSourceIndex = 0
+  if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
+    currentSourceIndex = roundRobinCounter % computedSourceList.length
+    console.log(`[multi-city] ROUND_ROBIN mode, starting from source index ${currentSourceIndex} (counter=${roundRobinCounter})`)
+  } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
+    currentSourceIndex = pickWeightedSourceIndex(computedSourceList, multiCityTraverseWeights, expectCityList)
+    console.log(`[multi-city] WEIGHTED mode, picked source index ${currentSourceIndex}`)
+  }
   afterPageLoad: while (true) {
     // check set security question tip modal
     let setSecurityQuestionTipModelProxy
@@ -1725,10 +1781,20 @@ async function toRecommendPage (hooks) {
         }
       }
     }
-    // for of reach terminal
-    if (
-      currentSourceIndex + 1 >= computedSourceList.length
-    ) {
+    // Source traversal: track visits and determine next source
+    sourcesVisitedThisRound++
+
+    // Check if this round is complete
+    const isRoundComplete = (() => {
+      if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
+        // ROUND_ROBIN: round completes after visiting all sources
+        return sourcesVisitedThisRound >= computedSourceList.length
+      }
+      // SEQUENTIAL / WEIGHTED / single source: round completes at list end
+      return currentSourceIndex + 1 >= computedSourceList.length
+    })()
+
+    if (isRoundComplete) {
       hooks.noPositionFoundForCurrentJob?.call()
       hooks.noPositionFoundAfterTraverseAllJob?.call()
       await sleep((20 + 30 * Math.random()) * 1000)
@@ -1736,11 +1802,34 @@ async function toRecommendPage (hooks) {
         page.goto(`https://www.zhipin.com/web/geek/jobs`),
         page.waitForNavigation()
       ])
-      currentSourceIndex = 0
+      sourcesVisitedThisRound = 0
+      // Determine next starting source index based on traverse mode
+      if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
+        roundRobinCounter++
+        currentSourceIndex = roundRobinCounter % computedSourceList.length
+        try {
+          writeStorageFile('multi-city-round-robin-counter.json', { counter: roundRobinCounter })
+        } catch {}
+        console.log(`[multi-city] ROUND_ROBIN: next round starting from source index ${currentSourceIndex} (counter=${roundRobinCounter})`)
+      } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
+        currentSourceIndex = pickWeightedSourceIndex(computedSourceList, multiCityTraverseWeights, expectCityList)
+        console.log(`[multi-city] WEIGHTED: next round picked source index ${currentSourceIndex}`)
+      } else {
+        currentSourceIndex = 0
+      }
     } else {
       hooks.noPositionFoundForCurrentJob?.call()
       await sleep((10 + 15 * Math.random()) * 1000)
-      currentSourceIndex += 1
+      if (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN && computedSourceList.length > 1) {
+        // ROUND_ROBIN: wrap around to continue visiting remaining sources
+        currentSourceIndex = (currentSourceIndex + 1) % computedSourceList.length
+      } else if (multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED && computedSourceList.length > 1) {
+        // WEIGHTED: pick next source by weight
+        currentSourceIndex = pickWeightedSourceIndex(computedSourceList, multiCityTraverseWeights, expectCityList)
+        console.log(`[multi-city] WEIGHTED: picked next source index ${currentSourceIndex}`)
+      } else {
+        currentSourceIndex += 1
+      }
     }
   }
 }

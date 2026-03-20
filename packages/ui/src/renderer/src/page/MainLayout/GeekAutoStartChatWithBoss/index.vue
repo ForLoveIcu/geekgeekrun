@@ -613,6 +613,72 @@
                 </el-form-item>
                 <div
                   v-if="
+                    ((!formContent.fieldsForUseCommonConfig.city
+                      ? formContent
+                      : commonJobConditionConfig
+                    ).expectCityList?.length ?? 0) >= 2
+                  "
+                  mt8px
+                >
+                  <div font-size-12px mb4px>多城市遍历方式：</div>
+                  <el-select
+                    v-model="formContent.multiCityTraverseMode"
+                    :style="{ width: '320px' }"
+                  >
+                    <el-option
+                      :value="MultiCityTraverseMode.SEQUENTIAL"
+                      label="逐个城市刷完（先刷完一个城市再刷下一个）"
+                    >逐个城市刷完（先刷完一个城市再刷下一个）</el-option>
+                    <el-option
+                      :value="MultiCityTraverseMode.ROUND_ROBIN"
+                      label="一轮一个城市轮换（每轮切换不同城市）"
+                    >一轮一个城市轮换（每轮切换不同城市）</el-option>
+                    <el-option
+                      :value="MultiCityTraverseMode.WEIGHTED"
+                      label="按比重随机分配"
+                    >按比重随机分配</el-option>
+                  </el-select>
+                  <div
+                    v-if="formContent.multiCityTraverseMode === MultiCityTraverseMode.WEIGHTED"
+                    mt6px
+                  >
+                    <div font-size-12px mb4px color-gray>
+                      为每个城市设置权重值（数值越大刷到的概率越高，默认为1）：
+                    </div>
+                    <div flex flex-wrap gap-8px>
+                      <div
+                        v-for="city in (
+                          !formContent.fieldsForUseCommonConfig.city
+                            ? formContent.expectCityList
+                            : (commonJobConditionConfig.expectCityList || [])
+                        )"
+                        :key="city"
+                        flex
+                        flex-items-center
+                        gap-4px
+                      >
+                        <el-tag size="small">{{ city }}</el-tag>
+                        <el-input-number
+                          :model-value="formContent.multiCityTraverseWeights[city] ?? 1"
+                          :min="0"
+                          :max="100"
+                          :step="1"
+                          size="small"
+                          controls-position="right"
+                          :style="{ width: '90px' }"
+                          @change="(v) => {
+                            formContent.multiCityTraverseWeights = {
+                              ...formContent.multiCityTraverseWeights,
+                              [city]: v ?? 1
+                            }
+                          }"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  v-if="
                     (!formContent.fieldsForUseCommonConfig.city
                       ? formContent
                       : commonJobConditionConfig
@@ -1732,7 +1798,8 @@ import {
   MarkAsNotSuitOp,
   StrategyScopeOptionWhenMarkJobNotMatch,
   SalaryCalculateWay,
-  JobDetailRegExpMatchLogic
+  JobDetailRegExpMatchLogic,
+  MultiCityTraverseMode
 } from '@geekgeekrun/sqlite-plugin/src/enums'
 import { debounce } from 'lodash'
 import mittBus from '../../../utils/mitt'
@@ -1784,6 +1851,8 @@ const formContent = ref({
   markAsNotActiveSelectedTimeRange: 7,
   // city
   expectCityList: [],
+  multiCityTraverseMode: MultiCityTraverseMode.SEQUENTIAL,
+  multiCityTraverseWeights: {},
   expectCityNotMatchStrategy: MarkAsNotSuitOp.NO_OP,
   strategyScopeOptionWhenMarkJobCityNotMatch:
     StrategyScopeOptionWhenMarkJobNotMatch.ONLY_COMPANY_MATCHED_JOB,
@@ -1926,6 +1995,10 @@ electron.ipcRenderer.invoke('fetch-config-file-content').then((res) => {
   formContent.value.strategyScopeOptionWhenMarkJobCityNotMatch =
     res.config['boss.json']?.strategyScopeOptionWhenMarkJobCityNotMatch ??
     StrategyScopeOptionWhenMarkJobNotMatch.ONLY_COMPANY_MATCHED_JOB
+  formContent.value.multiCityTraverseMode =
+    res.config['boss.json']?.multiCityTraverseMode ?? MultiCityTraverseMode.SEQUENTIAL
+  formContent.value.multiCityTraverseWeights =
+    res.config['boss.json']?.multiCityTraverseWeights ?? {}
 
   // salary
   formContent.value.expectSalaryCalculateWay =

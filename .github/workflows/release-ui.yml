@@ -152,9 +152,19 @@ jobs:
       - name: Create release for public
         uses: ncipollo/release-action@v1
         with:
-          prerelease: true
+          prerelease: false
           allowUpdates: true
           artifacts: geekgeekrun-ui@${{ github.sha }}/*
           tag: ${{ github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          body: TODO New Release.
+          body: |
+            ## 新功能
+
+            ### 多城市遍历策略
+            支持配置多个城市时的遍历方式，提供三种策略：
+            - **逐个城市刷完**（默认）：依次刷完一个城市的所有职位后再切换下一个城市
+            - **一轮一个城市轮换**：每一轮只刷一个城市，下一轮自动切换到下一个城市，循环轮换
+            - **按比重随机分配**：为每个城市设置权重值，按权重概率随机选择下一个刷新的城市
+
+            > 该选项仅在选择了 2 个及以上城市时显示，位于城市选择器下方。
+

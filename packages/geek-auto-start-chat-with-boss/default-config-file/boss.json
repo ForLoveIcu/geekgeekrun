@@ -18,6 +18,8 @@
   "jobNotActiveStrategy": 1,
   "markAsNotActiveSelectedTimeRange": 7,
   "expectCityList": [],
+  "multiCityTraverseMode": 1,
+  "multiCityTraverseWeights": {},
   "expectCityNotMatchStrategy": 3,
   "strategyScopeOptionWhenMarkJobCityNotMatch": 2,
   "jobDetailRegExpMatchLogic": 1,

@@ -41,6 +41,12 @@ export enum CombineRecommendJobFilterType {
   STATIC_COMBINE = 2,
 }
 
+export enum MultiCityTraverseMode {
+  SEQUENTIAL = 1,
+  ROUND_ROBIN = 2,
+  WEIGHTED = 3,
+}
+
 export enum JobHireStatus {
   HIRING = 1,
   CLOSED = 2,

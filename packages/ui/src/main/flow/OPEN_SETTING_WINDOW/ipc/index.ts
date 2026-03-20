@@ -110,6 +110,12 @@ export default function initIpc() {
       bossConfig.strategyScopeOptionWhenMarkJobCityNotMatch =
         payload.strategyScopeOptionWhenMarkJobCityNotMatch
     }
+    if (hasOwn(payload, 'multiCityTraverseMode')) {
+      bossConfig.multiCityTraverseMode = payload.multiCityTraverseMode
+    }
+    if (hasOwn(payload, 'multiCityTraverseWeights')) {
+      bossConfig.multiCityTraverseWeights = payload.multiCityTraverseWeights
+    }
 
     // salary
     if (hasOwn(payload, 'expectSalaryCalculateWay')) {
