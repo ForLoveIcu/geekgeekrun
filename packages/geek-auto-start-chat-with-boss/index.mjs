@@ -905,6 +905,7 @@ async function toRecommendPage (hooks) {
     const nextCity = nextIdx !== undefined ? getSourceCityName(nextIdx) : '—'
     const strategy = getTraverseModeName()
     const stats = Object.entries(cityVisitCount).map(([c, n]) => `${c}:${n}次`).join(', ') || '暂无'
+    const isRoundRobin = multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN
     console.log(
       `\n========== [城市轮换状态] ==========\n` +
       `  阶段: ${phase}\n` +
@@ -913,11 +914,25 @@ async function toRecommendPage (hooks) {
       `  当前策略: ${strategy}\n` +
       `  下一个城市: ${nextCity}\n` +
       `  各城市访问统计: ${stats}\n` +
-      (multiCityTraverseMode === MultiCityTraverseMode.ROUND_ROBIN
+      (isRoundRobin
         ? `  轮换计数器: ${roundRobinCounter} (本轮已访问 ${sourcesVisitedThisRound}/${computedSourceList.length})\n`
         : '') +
       `====================================`
     )
+    // Send structured data to UI via hooks
+    hooks.cityStatusUpdated?.promise({
+      phase,
+      sleepSec: sleepSec !== undefined ? Number(sleepSec.toFixed(1)) : null,
+      currentCity,
+      nextCity,
+      strategy,
+      cityVisitCount: { ...cityVisitCount },
+      roundRobinInfo: isRoundRobin ? {
+        counter: roundRobinCounter,
+        visitedThisRound: sourcesVisitedThisRound,
+        totalSources: computedSourceList.length
+      } : null
+    }).catch(() => {})
   }
 
   // Determine initial source index based on traverse mode

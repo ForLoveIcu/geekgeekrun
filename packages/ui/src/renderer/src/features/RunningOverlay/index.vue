@@ -52,6 +52,38 @@
             <span class="hint">(基于 {{ dailyStatsHistory.length }} 次历史达上限记录)</span>
           </div>
         </div>
+        <div v-if="cityStatus" class="city-status-panel">
+          <div class="city-status-header">🏙️ 城市轮换状态</div>
+          <div class="city-status-row">
+            <span class="city-status-label">阶段</span>
+            <span class="city-status-value">{{ cityStatus.phase }}</span>
+          </div>
+          <div v-if="cityStatus.sleepSec !== null" class="city-status-row">
+            <span class="city-status-label">休息</span>
+            <span class="city-status-value">{{ cityStatus.sleepSec }} 秒</span>
+          </div>
+          <div class="city-status-row">
+            <span class="city-status-label">当前城市</span>
+            <span class="city-status-value city-status-city">{{ cityStatus.currentCity }}</span>
+          </div>
+          <div class="city-status-row">
+            <span class="city-status-label">策略</span>
+            <span class="city-status-value">{{ cityStatus.strategy }}</span>
+          </div>
+          <div class="city-status-row">
+            <span class="city-status-label">下一个</span>
+            <span class="city-status-value city-status-city">{{ cityStatus.nextCity }}</span>
+          </div>
+          <div v-if="cityStatus.roundRobinInfo" class="city-status-row">
+            <span class="city-status-label">轮换</span>
+            <span class="city-status-value">本轮 {{ cityStatus.roundRobinInfo.visitedThisRound }}/{{ cityStatus.roundRobinInfo.totalSources }}</span>
+          </div>
+          <div v-if="Object.keys(cityStatus.cityVisitCount || {}).length" class="city-status-stats">
+            <span v-for="(count, city) in cityStatus.cityVisitCount" :key="city" class="city-stat-tag">
+              {{ city }}: {{ count }}次
+            </span>
+          </div>
+        </div>
         <div flex justify-between items-center w-full>
           <div>
             {{ runningStatusTextMapByCode[currentRunningStatus] }}
@@ -192,13 +224,32 @@ function handleChatGreetMessage(_ev, { data }) {
   }
 }
 ipcRenderer.on('worker-to-gui-message', handleChatGreetMessage)
+
+// City status listener
+const cityStatus = ref<{
+  phase: string
+  sleepSec: number | null
+  currentCity: string
+  nextCity: string
+  strategy: string
+  cityVisitCount: Record<string, number>
+  roundRobinInfo: { counter: number; visitedThisRound: number; totalSources: number } | null
+} | null>(null)
+function handleCityStatusMessage(_ev, { data }) {
+  if (data.type === 'city-status-updated') {
+    cityStatus.value = data.statusInfo
+  }
+}
+ipcRenderer.on('worker-to-gui-message', handleCityStatusMessage)
 onBeforeUnmount(() => {
   ipcRenderer.removeListener('worker-to-gui-message', handleChatGreetMessage)
+  ipcRenderer.removeListener('worker-to-gui-message', handleCityStatusMessage)
 })
 // Reload today count when dialog re-opens (new run)
 watch(() => props.runRecordId, () => {
   loadTodayCount()
   hitDailyLimit.value = false
+  cityStatus.value = null
 })
 
 const isDialogVisible = ref(false)
@@ -312,6 +363,50 @@ ipcRenderer.on('worker-exited', (ev, payload) => {
           .hint {
             font-size: 12px;
             color: #999;
+          }
+        }
+      }
+      .city-status-panel {
+        margin-top: 8px;
+        margin-bottom: 8px;
+        padding: 10px 14px;
+        background: rgba(64, 158, 255, 0.06);
+        border-radius: 8px;
+        font-size: 13px;
+        color: #333;
+        .city-status-header {
+          font-weight: 600;
+          margin-bottom: 6px;
+          color: #409eff;
+        }
+        .city-status-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 2px 0;
+          .city-status-label {
+            color: #999;
+            min-width: 60px;
+          }
+          .city-status-value {
+            text-align: right;
+            flex: 1;
+          }
+          .city-status-city {
+            color: #409eff;
+            font-weight: 500;
+          }
+        }
+        .city-status-stats {
+          margin-top: 6px;
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+          .city-stat-tag {
+            background: rgba(64, 158, 255, 0.1);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 12px;
+            color: #409eff;
           }
         }
       }

@@ -116,7 +116,8 @@ const runAutoChat = async () => {
     encounterEmptyRecommendJobList: new AsyncSeriesHook(['args']),
     sageTimeEnter: new AsyncSeriesHook(['args']),
     sageTimeExit: new AsyncSeriesHook(['args']),
-    chatGreetCountUpdated: new AsyncSeriesHook(['countInfo'])
+    chatGreetCountUpdated: new AsyncSeriesHook(['countInfo']),
+    cityStatusUpdated: new AsyncSeriesHook(['statusInfo'])
   }
   initPlugins(hooks)
 
@@ -126,6 +127,17 @@ const runAutoChat = async () => {
       data: {
         type: 'chat-greet-count-updated',
         countInfo,
+        runRecordId
+      }
+    })
+  })
+
+  hooks.cityStatusUpdated.tapPromise('SendCityStatusToUI', async (statusInfo) => {
+    sendToDaemon({
+      type: 'worker-to-gui-message',
+      data: {
+        type: 'city-status-updated',
+        statusInfo,
         runRecordId
       }
     })
